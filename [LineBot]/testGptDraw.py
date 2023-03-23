@@ -27,6 +27,8 @@ handler = WebhookHandler(config.get('line-bot', 'channel_secret'))
 OpenAI_API_Key = config.get('OpenAI-bot', 'API_Key')
 
 Img_Url = ""
+Jsonfile = "./user_messages.json"
+HistoryMessage = [{'role': 'system', 'content': '一個聰明的女人'}]
 
 # 接收 LINE 的資訊
 @app.route("/callback", methods=['POST'])
@@ -65,6 +67,7 @@ def callback():
 
 @handler.add(MessageEvent)
 def handle_message(event):
+    global HistoryMessage
     print("handle_message:",event.message.type)
     openai.api_key = OpenAI_API_Key
     if (event.message.type == "text"):
@@ -79,21 +82,35 @@ def handle_message(event):
                 preview_image_url=imr_url
             )
             line_bot_api.reply_message(event.reply_token,image_message)
-        else:
+        elif 'hi ai:' in msg: #非多輪對話
             reply_message = ''
-            if msg != 'hi ai:':
-                openai.api_key = OpenAI_API_Key
-                response = openai.Completion.create(
-                    model='text-davinci-003',
-                    prompt=msg,
-                    max_tokens=256,
-                    temperature=0.5,
+            response = openai.Completion.create(
+            model='text-davinci-003',
+            prompt=msg,
+            max_tokens=256,
+            temperature=0.5,
             )
             reply_message = response["choices"][0]["text"].replace('\n','')
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text=reply_message)
-        )
+            )
+        else: #多輪對話
+            # 提问-记录
+            HistoryMessage.append({"role": "user", "content": msg})
+            rsp = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages = HistoryMessage
+            )
+            answer = rsp.get("choices")[0]["message"]["content"]
+            # 回答-记录
+            HistoryMessage.append({"role": "assistant", "content": answer})
+            print("[HistoryMessage]:",HistoryMessage)
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=answer)
+            )
+            #writeTojson()
     elif (event.message.type == "image"):
         print('image')
         # 將接到的圖存起來，回傳圖片URL
@@ -121,29 +138,6 @@ def handle_message(event):
         print('audio')
     elif (event.message.type == "location"):
         print('location')
-    return
-    if msg != 'hi ai:':
-        openai.api_key = OpenAI_API_Key
-        response = openai.Completion.create(
-                model='text-davinci-003',
-                prompt=msg,
-                max_tokens=256,
-                temperature=0.5,
-                )
-        reply_message = response["choices"][0]["text"].replace('\n','')
-        print("ai:",reply_message)
-    elif event.source.user_id != "1234567821345678":
-        print("event.message.text:",event.message.text)
-        # Phoebe 愛唱歌
-        pretty_note = '♫♪♬'
-        for i in event.message.text:
-        
-            reply_message += i
-            reply_message += random.choice(pretty_note)
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=reply_message)
-    )
 
 #請OPEN AI畫圖，存在Local
 def generateImage_AndSave(prompt, image_count):
@@ -182,6 +176,20 @@ def getImgurl(Filelocation):
 def getUID():
     t = datetime.now().strftime('%Y%m%d%H%M%S%f')
     return t
-    
+
+def writeTojson():
+    try:
+        # 判断文件是否存在
+        if not os.path.exists(Jsonfile):
+            with open(Jsonfile, "w") as f:
+                # 创建文件
+                pass
+        f = open(Jsonfile, 'w', encoding='utf-8')
+        json.dump(HistoryMessage, f)
+        f.close()
+    except Exception as e:
+        print(f"錯誤代碼：{e}")
+    return    
+            
 if __name__ == "__main__":
     app.run()
